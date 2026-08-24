@@ -1,0 +1,21 @@
+[23:38:31] Container started
+[23:38:34] pre-copy complete - downtime minimized
+[23:42:33] container already running
+[23:42:36] pre-copy complete - downtime minimized
+[23:42:36] direct CRIU checkpoint attempted
+[23:42:36] checkpoint size: N/A
+[23:42:36] Checkpoint compressed: 4.0K
+[23:44:40] container already running
+[23:44:44] pre-copy complete - downtime minimized
+[23:44:44] direct CRIU checkpoint attempted
+[23:44:44] checkpoint size: N/A
+[23:44:44] Checkpoint compressed: 4.0K
+[23:50:53] container already running
+[23:50:56] pre-copy complete - downtime minimized
+[23:50:57] direct CRIU checkpoint attempted
+[23:50:57] checkpoint size: N/A
+[23:50:57] Checkpoint compressed: 4.0K
+[23:51:01] Transfer complete
+[23:51:01] Storage Layer acknowledge
+[23:51:04] container restarted on GCP
+[23:51:07] Container verified running on GCP
