@@ -8,7 +8,7 @@ from datetime import datetime
 
 CONTAINER_NAME = "counter-app"
 CHECKPOINT_DIR = "/tmp/criu-checkpoint"
-LOG_FILE       = os.path.expanduser("~/migration-project/migration_log.txt")
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),"migration_log.txt")
  
 #HELPERS
 

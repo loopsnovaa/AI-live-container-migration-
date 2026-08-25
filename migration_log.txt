@@ -19,3 +19,12 @@
 [23:51:01] Storage Layer acknowledge
 [23:51:04] container restarted on GCP
 [23:51:07] Container verified running on GCP
+[01:56:40] Container started
+[01:56:43] pre-copy complete - downtime minimized
+[01:56:43] direct CRIU checkpoint attempted
+[01:56:43] checkpoint size: N/A
+[01:56:43] Checkpoint compressed: 4.0K
+[01:56:47] Transfer complete
+[01:56:47] Storage Layer acknowledge
+[01:56:50] container restarted on GCP
+[01:56:52] Container verified running on GCP
