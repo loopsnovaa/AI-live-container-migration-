@@ -71,6 +71,7 @@ st.divider()
 
 # DATA
 prices  = get_prices()
+prices  = {k: float(v) if not isinstance(v, list) else float(v[0]) for k, v in prices.items()} 
 metrics = get_metrics()
 routing = get_routing()
 best    = min(prices, key=prices.get)
