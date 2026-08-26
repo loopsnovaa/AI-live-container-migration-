@@ -1,4 +1,4 @@
-cat > ~/migration-project/migrate.py << 'EOF'
+
 import subprocess
 import time
 import os
@@ -230,4 +230,4 @@ if __name__ == "__main__":
     import sys
     target = sys.argv[1] if len(sys.argv) > 1 else "GCP"
     migrate(target)
-EOF
+
