@@ -230,4 +230,15 @@ if __name__ == "__main__":
     import sys
     target = sys.argv[1] if len(sys.argv) > 1 else "GCP"
     migrate(target)
+# Notify service mesh — updates dashboard automatically!
+import requests
+try:
+    requests.post(f"http://192.168.88.10:8888/migrate",
+        json={"service":"counter-app",
+              "target_vm": target_cloud,
+              "target_ip": "192.168.88.14"},
+        timeout=2)
+    print("  [✓] Service mesh routing updated!")
+except:
+    pass
 
