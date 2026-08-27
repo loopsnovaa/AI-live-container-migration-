@@ -13,7 +13,7 @@ CHECKPOINT_DIR  = "/tmp/criu-checkpoint"
 LOG_FILE        = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migration_log.txt")
 
 # TARGET VM (GCP = Friend's laptop)
-TARGET_IP       = "192.168.88.10"
+TARGET_IP       = "192.168.88.14"
 TARGET_USER     = "maggie"
 TARGET_DIR      = "/tmp/criu-checkpoint"
 
