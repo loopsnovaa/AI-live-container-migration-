@@ -1,7 +1,7 @@
 import random
 import time
 import psutil
-from price_oracle import get_aws_price, get_azure_price, get_gcp_price
+#from price_oracle import get_aws_price, get_azure_price, get_gcp_price
 
 #CONFIGURATION
 
@@ -104,16 +104,29 @@ def run_ga(history, metrics):
 #COLLECT REAL PRICE HISTORY
 
 def collect_prices():
-   history = {"AWS": [], "GCP": [], "Azure": []}
-   print("Collecting live price samples...")
-   for i in range(SAMPLES):
-      history["AWS"].append(get_aws_price())
-      history["GCP"].append(get_gcp_price())
-      history["Azure"].append(get_azure_price())
-      print(f" [{i+1}/{SAMPLES}] AWS:${history['AWS'][-1]:.4f} "
-            f"GCP:${history['GCP'][-1]:.4f} "
-            f"Azure:${history['Azure'][-1]:.4f}")
-   return history
+    """
+    Demo mode: use local fallback price history.
+    AWS shows a rising price trend so the predictor
+    can demonstrate an approaching price spike.
+    """
+
+    history = {
+        "AWS":   [0.20, 0.22, 0.24, 0.27, 0.30, 0.33, 0.36, 0.40, 0.44, 0.48],
+        "GCP":   [0.18, 0.18, 0.18, 0.18, 0.18, 0.18, 0.18, 0.18, 0.18, 0.18],
+        "Azure": [0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16]
+    }
+
+    print("Using fallback/demo price data...")
+    
+    for i in range(SAMPLES):
+        print(
+            f" [{i+1}/{SAMPLES}] "
+            f"AWS:${history['AWS'][i]:.4f} "
+            f"GCP:${history['GCP'][i]:.4f} "
+            f"Azure:${history['Azure'][i]:.4f}"
+        )
+
+    return history
 
 #MAIN
 
