@@ -1,6 +1,7 @@
 import random
 import time
 import psutil
+import requests
 #from price_oracle import get_aws_price, get_azure_price, get_gcp_price
 
 #CONFIGURATION
@@ -171,6 +172,27 @@ if __name__ == "__main__":
    print(f"\n Total migrations : {migrations}")
    print(f" Migration cost : ${migrations * MIGRATION_COST_PER_SEC * MIGRATION_TIME_SEC:.4f}")
    print(f"\n MIGRATE TO ---> {predicted}")
+        # AUTOMATIC MIGRATION TRIGGER
+   if predicted == "GCP":
+     print("\n🚨 PRICE SPIKE PREDICTED!")
+     print("🤖 AI decision: Migrate workload AWS → GCP")
+     print("🚀 Triggering migration automatically...")
+
+     try:
+        response = requests.post(
+            "http://192.168.88.10:8888/migrate",
+            json={
+                "service": "counter-app",
+                "target_vm": "GCP",
+                "target_ip": "192.168.88.14"
+            },
+            timeout=10
+        )
+
+        print(f"Migration controller response: {response.text}")
+
+     except Exception as e:
+        print(f"Migration trigger failed: {e}")
    print(f" factors used: Price +Trend + Real CPU/RAM + Latency + SLA + Cost")
    print("=" * 55)
 
