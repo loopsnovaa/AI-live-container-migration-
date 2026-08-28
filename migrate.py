@@ -20,7 +20,7 @@ os.path.dirname(os.path.abspath(file)),
 "migration_log.txt"
 )
 
-Service mesh running on THIS VM
+#Service mesh running on THIS VM
 
 SERVICE_MESH_IP = "192.168.88.10"
 SERVICE_MESH_PORT = "8888"
