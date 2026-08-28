@@ -96,17 +96,16 @@ def ensure_source_container():
     )
 
     ok, _, err = run(
-        f'docker run -d '
-        f'--name {SOURCE_CONTAINER} '
-        f'--security-opt seccomp=unconfined '
-        f'ubuntu:22.04 '
-        f'bash -c "count=0; while true; do '
-        f'echo Count: $count; '
-        f'count=$((count+1)); '
-        f'sleep 1; '
-        f'done"'
+       f"""docker run -d """
+       f"""--name {SOURCE_CONTAINER} """
+       f"""--security-opt seccomp=unconfined """
+       f"""ubuntu:22.04 """
+       f"""bash -c 'count=0; while true; do """
+       f"""echo "Count: $count"; """
+       f"""count=$((count+1)); """
+       f"""sleep 1; """
+       f"""done'"""
     )
-
     if not ok:
         warn(f"Could not start source container: {err}")
         return False
