@@ -174,27 +174,23 @@ if __name__ == "__main__":
    print(f"\n MIGRATE TO ---> {predicted}")
 
    # AUTOMATIC MIGRATION TRIGGER
-
-   if predicted == "GCP":
+if predicted == "GCP":
      print("\n🚨 PRICE SPIKE PREDICTED!")
      print("🤖 AI decision: Migrate workload AWS → GCP")
      print("🚀 Triggering migration automatically...")
 
      try:
-        import subprocess
-
-        result = subprocess.run(
-            ["python3", "migrate.py"],
-            check=False
+        response = requests.post(
+            "http://192.168.88.10:8888/migrate",
+            json={
+                "service": "counter-app",
+                "target_vm": "GCP",
+                "target_ip": "192.168.88.14"
+            },
+            timeout=10
         )
 
-        if result.returncode == 0:
-            print("✅ Automatic migration completed!")
-        else:
-            print("❌ Migration failed!")
+        print(f"Migration controller response: {response.text}")
 
      except Exception as e:
-        print(f"Migration trigger failed: {e}")
-
-   print(f" factors used: Price +Trend + Real CPU/RAM + Latency + SLA + Cost")
-   print("=" * 55)
+        print(f"Migration trigger failed: {e}") 
