@@ -97,16 +97,15 @@ def ensure_source_container():
     )
 
     ok, _, err = run(
-          f"""docker create
-          --name {TARGET_CONTAINER}
-          --security-opt seccomp=unconfined
-          ubuntu:22.04
-          bash -c 'count={current_count + 1};
-          while true; do
-             echo "Count: $count";
-             count=$((count+1));
-             sleep 1;
-          done'"""
+       f"""docker run -d
+       --name {SOURCE_CONTAINER}
+       --security-opt seccomp=unconfined
+       ubuntu:22.04
+       bash -c 'count=0; while true; do
+       echo "Count: $count";
+       count=$((count+1));
+       sleep 1;
+       done'"""
     )
     if not ok:
         warn(f"Could not start source container: {err}")
@@ -383,18 +382,16 @@ def restore_on_target():
     info("Creating target container...")
 
     ok, _, err = run(
-        f'docker create '
-        f'--name {TARGET_CONTAINER} '
-        f'--security-opt seccomp=unconfined '
-        f'ubuntu:22.04 '
-        f'bash -c "count={current_count + 1}; '
-        f'while true; do '
-        f'echo Count: $count; '
-        f'count=$((count+1)); '
-        f'sleep 1; '
-        f'done"'
+      f"""docker create
+      --name {TARGET_CONTAINER}
+      --security-opt seccomp=unconfined
+      ubuntu:22.04
+      bash -c 'count={current_count + 1}; while true; do
+      echo "Count: $count";
+      count=$((count+1));
+      sleep 1;
+      done'"""
     )
-
     if not ok:
 
         warn(
