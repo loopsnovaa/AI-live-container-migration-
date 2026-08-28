@@ -271,10 +271,11 @@ def layer2_heart():
         f"Count = {current_count}"
     )
 
-    iterative_precopy()
+    if not iterative_precopy():
+         return False
 
     if not criu_checkpoint():
-        return False
+         return False
 
     return True
 
