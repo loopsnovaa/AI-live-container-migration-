@@ -183,15 +183,8 @@ def restore_on_target(target_cloud):
     if ok:
         log(f"Container restored from CRIU checkpoint on {target_cloud}!")
     else:
-        warn("Checkpoint restore not available — clean restart on target...")
-        run_remote(
-            f'docker run -d --name {CONTAINER_NAME} '
-            f'--security-opt seccomp=unconfined ubuntu:22.04 '
-            f'bash -c "count=100; while true; do echo Count: \$count; '
-            f'count=\$((count+1)); sleep 1; done"'
-        )
-        time.sleep(2)
-        log(f"Container started fresh on {target_cloud}")
+        warn(f"Checkpoint restore FAILED: {err}")
+        return False
 
     # Verify on target
     time.sleep(2)
