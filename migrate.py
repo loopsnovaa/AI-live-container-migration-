@@ -320,20 +320,17 @@ def layer3_bridge():
     info("No SCP required")
     info("Using local Docker host as migration bridge")
 
-    # Check that checkpoint exists
-    ok, checkpoints, _ = run(
-        f"docker checkpoint ls {SOURCE_CONTAINER}"
-    )
+    # Check that the application-state checkpoint exists
+    checkpoint_file = f"{CHECKPOINT_DIR}/application_state.json"
 
-    if not ok or CHECKPOINT_NAME not in checkpoints:
+    if not os.path.exists(checkpoint_file):
 
-        warn("Checkpoint not available for transfer")
-
+        warn("Application-state checkpoint not available")
         return False
 
-    log("CRIU checkpoint ready for local transfer")
+    log("Checkpoint available for local transfer")
 
-    # Simulate network transfer timing
+    # Simulate local checkpoint transfer
     info("Transferring checkpoint locally...")
 
     time.sleep(2)
@@ -341,7 +338,6 @@ def layer3_bridge():
     log("Checkpoint transferred to target container")
 
     return True
-
 
 # ═══════════════════════════════════════════════
 # LAYER 4 — STORAGE
