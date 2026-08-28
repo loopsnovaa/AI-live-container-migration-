@@ -94,6 +94,7 @@ def criu_checkpoint():
         f"{CONTAINER_NAME} checkpoint1"
     )
     if ok:
+        run(f"sudo chown -R $USER:$USER {CHECKPOINT_DIR}")
         log("CRIU checkpoint created via Docker")
     else:
         warn("Docker checkpoint failed — trying direct CRIU...")
@@ -135,7 +136,7 @@ def layer3_bridge(target_cloud):
     # REAL transfer via SCP
     info(f"Transferring checkpoint to {TARGET_USER}@{TARGET_IP}...")
     ok, out, err = run(
-        f"scp -r {CHECKPOINT_DIR} {TARGET_USER}@{TARGET_IP}:{TARGET_DIR}"
+        f"scp -r {CHECKPOINT_DIR}/checkpoint1 {TARGET_USER}@{TARGET_IP}:{TARGET_DIR}/"
     )
     if ok:
         log(f"Checkpoint transferred to {target_cloud} VM successfully!")
@@ -169,7 +170,7 @@ def restore_on_target(target_cloud):
 
     run_remote(
          f'docker create --name {CONTAINER_NAME} '
-         f'--security-opt seccomp=unconfined ubuntu:22.04 '
+         f'--network=host --security-opt seccomp=unconfined ubuntu:22.04 '
          f'bash -c "count=0; while true; do echo Count: $count; '
          f'count=$((count+1)); sleep 1; done"'
     )
