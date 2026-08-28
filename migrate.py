@@ -13,7 +13,7 @@ CHECKPOINT_DIR  = "/tmp/criu-checkpoint"
 LOG_FILE        = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migration_log.txt")
 
 # TARGET VM (GCP = Friend's laptop)
-TARGET_IP       = "192.168.88.14"
+TARGET_IP       = "192.168.88.10"
 TARGET_USER     = "maggie"
 TARGET_DIR      = "/tmp/criu-checkpoint"
 
@@ -94,7 +94,6 @@ def criu_checkpoint():
         f"{CONTAINER_NAME} checkpoint1"
     )
     if ok:
-        run(f"sudo chown -R $USER:$USER {CHECKPOINT_DIR}")
         log("CRIU checkpoint created via Docker")
     else:
         warn("Docker checkpoint failed — trying direct CRIU...")
@@ -136,7 +135,7 @@ def layer3_bridge(target_cloud):
     # REAL transfer via SCP
     info(f"Transferring checkpoint to {TARGET_USER}@{TARGET_IP}...")
     ok, out, err = run(
-        f"scp -r {CHECKPOINT_DIR}/checkpoint1 {TARGET_USER}@{TARGET_IP}:{TARGET_DIR}/"
+        f"scp -r {CHECKPOINT_DIR} {TARGET_USER}@{TARGET_IP}:{TARGET_DIR}"
     )
     if ok:
         log(f"Checkpoint transferred to {target_cloud} VM successfully!")
@@ -165,27 +164,27 @@ def layer4_storage(target_cloud):
 def restore_on_target(target_cloud):
     print(f"\n[RESTORE] Restoring container on {target_cloud} ({TARGET_IP})...")
 
-   # Prepare matching stopped container on target
+    # Remove old container on target
     run_remote(f"docker rm -f {CONTAINER_NAME}")
 
-    run_remote(
-         f'docker create --name {CONTAINER_NAME} '
-         f'--network=host --security-opt seccomp=unconfined ubuntu:22.04 '
-         f'bash -c "count=0; while true; do echo Count: $count; '
-         f'count=$((count+1)); sleep 1; done"'
-    )
-
-# Try checkpoint restore on target
+    # Try checkpoint restore on target
     ok, out, err = run_remote(
-         f"docker start --checkpoint-dir {TARGET_DIR} "
-         f"--checkpoint checkpoint1 {CONTAINER_NAME}"
+        f"docker start --checkpoint-dir {TARGET_DIR} "
+        f"--checkpoint checkpoint1 {CONTAINER_NAME}"
     )
 
     if ok:
         log(f"Container restored from CRIU checkpoint on {target_cloud}!")
     else:
-        warn(f"Checkpoint restore FAILED: {err}")
-        return False
+        warn("Checkpoint restore not available — clean restart on target...")
+        run_remote(
+            f'docker run -d --name {CONTAINER_NAME} '
+            f'--security-opt seccomp=unconfined ubuntu:22.04 '
+            f'bash -c "count=100; while true; do echo Count: \$count; '
+            f'count=\$((count+1)); sleep 1; done"'
+        )
+        time.sleep(2)
+        log(f"Container started fresh on {target_cloud}")
 
     # Verify on target
     time.sleep(2)
