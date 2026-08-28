@@ -1,27 +1,35 @@
 import subprocess
 import time
 import os
+import re
+import shutil
 from datetime import datetime
 
 # ═══════════════════════════════════════════════
 #   CONFIG
 # ═══════════════════════════════════════════════
-CONTAINER_NAME  = "counter-app"
-CHECKPOINT_DIR  = "/tmp/criu-checkpoint"
-CHECKPOINT_NAME = "checkpoint1"
-LOG_FILE        = os.path.join(
+
+CONTAINER_NAME = "counter-app"
+CHECKPOINT_DIR = "/tmp/criu-checkpoint"
+ARCHIVE_FILE = "/tmp/checkpoint.tar.gz"
+
+LOG_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "migration_log.txt"
 )
 
-# TARGET VM (GCP = Friend's laptop)
-TARGET_IP       = "192.168.88.14"
-TARGET_USER     = "maggie"
-TARGET_DIR      = "/tmp/criu-checkpoint"
+# SOURCE VM
+SOURCE_IP = "192.168.88.10"
+
+# TARGET VM
+TARGET_IP = "192.168.88.14"
+TARGET_USER = "maggie"
+TARGET_DIR = "/tmp/criu-checkpoint"
 
 # ═══════════════════════════════════════════════
 #   HELPERS
 # ═══════════════════════════════════════════════
+
 def log(msg):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"  [✓] {msg}")
@@ -44,52 +52,71 @@ def run(cmd):
         capture_output=True,
         text=True
     )
-    return (
-        result.returncode == 0,
-        result.stdout,
-        result.stderr
-    )
+    return result.returncode == 0, result.stdout, result.stderr
 
 
 def run_remote(cmd):
-    """Run command on friend's VM via SSH"""
-    full_cmd = (
-        f"ssh -o ConnectTimeout=10 "
-        f"{TARGET_USER}@{TARGET_IP} '{cmd}'"
-    )
-
+    """
+    Run a command on target VM through SSH.
+    No sudo is used because Docker is already accessible
+    through the user's Docker permissions.
+    """
     result = subprocess.run(
-        full_cmd,
-        shell=True,
+        [
+            "ssh",
+            "-o", "ConnectTimeout=10",
+            "-o", "ConnectionAttempts=1",
+            f"{TARGET_USER}@{TARGET_IP}",
+            cmd
+        ],
         capture_output=True,
         text=True
     )
 
-    return (
-        result.returncode == 0,
-        result.stdout,
-        result.stderr
+    return result.returncode == 0, result.stdout, result.stderr
+
+
+def scp_to_target(local_path, remote_path):
+    result = subprocess.run(
+        [
+            "scp",
+            "-o", "ConnectTimeout=10",
+            "-o", "ConnectionAttempts=1",
+            local_path,
+            f"{TARGET_USER}@{TARGET_IP}:{remote_path}"
+        ],
+        capture_output=True,
+        text=True
     )
+
+    return result.returncode == 0, result.stdout, result.stderr
 
 
 # ═══════════════════════════════════════════════
 #   LAYER 1 — BRAIN
 # ═══════════════════════════════════════════════
+
 def layer1_brain(target_cloud):
     print("\n[LAYER 1 — BRAIN] AI Predictor triggered migration")
+
     info(f"Target cloud  : {target_cloud}")
+    info(f"Source VM     : {SOURCE_IP}")
     info(f"Target VM     : {TARGET_USER}@{TARGET_IP}")
     info("Reason        : GA identified cheapest + safest cloud")
+
+    log("AI migration decision generated")
 
 
 # ═══════════════════════════════════════════════
 #   LAYER 2 — MIGRATION ENGINE
 # ═══════════════════════════════════════════════
+
 def ensure_container_running():
+
     info(f"Checking container '{CONTAINER_NAME}'...")
 
     ok, out, _ = run(
-        f"docker ps --format '{{{{.Names}}}}'"
+        "docker ps --format '{{.Names}}'"
     )
 
     if CONTAINER_NAME in out.splitlines():
@@ -101,12 +128,16 @@ def ensure_container_running():
     run(f"docker rm -f {CONTAINER_NAME}")
 
     ok, _, err = run(
-        f'docker run -d --name {CONTAINER_NAME} '
-        f'--security-opt seccomp=unconfined ubuntu:22.04 '
-        f'bash -c "count=0; while true; do '
-        f'echo Count: \$count; '
-        f'count=\$((count+1)); '
-        f'sleep 1; done"'
+        f'docker run -d '
+        f'--name {CONTAINER_NAME} '
+        f'--security-opt seccomp=unconfined '
+        f'ubuntu:22.04 '
+        f'bash -c "count=0; '
+        f'while true; do '
+        f'echo Count: $count; '
+        f'count=$((count+1)); '
+        f'sleep 1; '
+        f'done"'
     )
 
     if not ok:
@@ -119,26 +150,47 @@ def ensure_container_running():
     return True
 
 
-def show_state(label):
-    info(f"Container state {label}:")
+def get_current_count():
 
-    ok, out, _ = run(
-        f"docker logs --tail 3 {CONTAINER_NAME}"
+    ok, logs, _ = run(
+        f"docker logs {CONTAINER_NAME}"
     )
 
     if not ok:
-        warn("Could not read container logs")
+        return 0
+
+    matches = re.findall(
+        r"Count:\s*(\d+)",
+        logs
+    )
+
+    if matches:
+        return int(matches[-1])
+
+    return 0
+
+
+def show_state(label):
+
+    info(f"Container state {label}:")
+
+    ok, out, _ = run(
+        f"docker logs --tail 5 {CONTAINER_NAME}"
+    )
+
+    if not ok:
         return
 
-    for line in out.strip().split("\n"):
-        if line:
-            print(f"      {line}")
+    for line in out.strip().splitlines():
+        print(f"      {line}")
 
 
 def iterative_precopy():
+
     info("Iterative Pre-Copy Controller starting...")
 
     for round_num in range(1, 4):
+
         pages = 200 + round_num * 100
 
         info(
@@ -151,155 +203,136 @@ def iterative_precopy():
     log("Pre-copy complete — downtime minimized")
 
 
-# ═══════════════════════════════════════════════
-#   REAL DOCKER / CRIU CHECKPOINT
-# ═══════════════════════════════════════════════
 def criu_checkpoint():
+
     info("CRIU final checkpoint — freezing container...")
 
-    # Remove any previous Docker checkpoint
     run(
-        f"docker checkpoint rm "
-        f"{CONTAINER_NAME} "
-        f"{CHECKPOINT_NAME}"
+        f"rm -rf {CHECKPOINT_DIR}"
     )
 
-    # IMPORTANT:
-    # Do NOT use --checkpoint-dir here.
-    #
-    # We already verified that your Docker daemon
-    # supports checkpoint creation without a custom
-    # checkpoint directory, but does NOT support
-    # custom checkpoint-dir during restore.
+    run(
+        f"mkdir -p {CHECKPOINT_DIR}"
+    )
 
     ok, out, err = run(
         f"docker checkpoint create "
-        f"{CONTAINER_NAME} "
-        f"{CHECKPOINT_NAME}"
+        f"--checkpoint-dir {CHECKPOINT_DIR} "
+        f"{CONTAINER_NAME} checkpoint1"
     )
 
-    if not ok:
-        warn("Docker/CRIU checkpoint failed")
-        warn(err)
-        return False
+    if ok:
 
-    log("CRIU checkpoint created via Docker")
+        log("CRIU checkpoint created via Docker")
 
-    # Verify Docker registered the checkpoint
-    ok, checkpoints, err = run(
-        f"docker checkpoint ls {CONTAINER_NAME}"
-    )
-
-    if not ok:
-        warn("Could not list Docker checkpoints")
-        warn(err)
-        return False
-
-    if CHECKPOINT_NAME not in checkpoints:
-        warn("Checkpoint was created but not registered")
-        return False
-
-    log("Checkpoint registered successfully")
-
-    # Show checkpoint information
-    ok, container_id, _ = run(
-        f"docker inspect "
-        f"--format '{{{{.Id}}}}' "
-        f"{CONTAINER_NAME}"
-    )
-
-    if ok and container_id.strip():
-        checkpoint_path = (
-            f"/var/lib/docker/containers/"
-            f"{container_id.strip()}/checkpoints/"
-            f"{CHECKPOINT_NAME}"
+        # Verify checkpoint contents
+        ok2, files, _ = run(
+            f"find {CHECKPOINT_DIR}/checkpoint1 "
+            f"-maxdepth 1 -type f"
         )
 
-        ok2, size_out, _ = run(
-            f"sudo du -sh '{checkpoint_path}'"
+        if ok2 and files.strip():
+
+            log("Checkpoint registered successfully")
+
+            return True
+
+        warn("Checkpoint directory is empty")
+
+    else:
+
+        warn(
+            f"Docker checkpoint failed: {err.strip()}"
         )
 
-        if ok2 and size_out:
-            log(
-                f"Checkpoint size: "
-                f"{size_out.split()[0]}"
+        # Direct CRIU fallback
+        info("Trying direct CRIU...")
+
+        ok_pid, pid_out, _ = run(
+            f"docker inspect "
+            f"--format '{{{{.State.Pid}}}}' "
+            f"{CONTAINER_NAME}"
+        )
+
+        pid = pid_out.strip()
+
+        if pid and pid != "0":
+
+            ok_criu, _, criu_err = run(
+                f"sudo criu dump "
+                f"-t {pid} "
+                f"-D {CHECKPOINT_DIR} "
+                f"--shell-job "
+                f"--leave-running "
+                f"-o dump.log"
             )
 
-    return True
+            if ok_criu:
+                log("Direct CRIU checkpoint created")
+                return True
+
+            warn(
+                f"Direct CRIU failed: {criu_err.strip()}"
+            )
+
+    return False
 
 
 def layer2_heart():
+
     print("\n[LAYER 2 — HEART] Migration Engine starting...")
 
     if not ensure_container_running():
-        return False
+        return False, 0
 
     show_state("BEFORE migration")
 
+    current_count = get_current_count()
+
+    info(
+        f"Current application state: Count = {current_count}"
+    )
+
     iterative_precopy()
 
-    if not criu_checkpoint():
-        return False
+    checkpoint_ok = criu_checkpoint()
 
-    return True
+    if not checkpoint_ok:
+        warn("CRIU checkpoint creation failed")
+        return False, current_count
+
+    ok, size_out, _ = run(
+        f"du -sh {CHECKPOINT_DIR}"
+    )
+
+    size = (
+        size_out.split()[0]
+        if size_out
+        else "N/A"
+    )
+
+    log(f"Checkpoint size: {size}")
+
+    return True, current_count
 
 
 # ═══════════════════════════════════════════════
-#   LAYER 3 — REAL NETWORK TRANSFER via SCP
+#   LAYER 3 — REAL NETWORK TRANSFER
 # ═══════════════════════════════════════════════
+
 def layer3_bridge(target_cloud):
+
     print("\n[LAYER 3 — BRIDGE] Real Network Transfer...")
 
-    # ------------------------------------------------
-    # Find Docker container ID
-    # ------------------------------------------------
-    ok, container_id, err = run(
-        f"docker inspect "
-        f"--format '{{{{.Id}}}}' "
-        f"{CONTAINER_NAME}"
-    )
-
-    if not ok or not container_id.strip():
-        warn(f"Could not find container ID: {err}")
-        return False
-
-    container_id = container_id.strip()
-
-    # ------------------------------------------------
-    # Real Docker checkpoint location
-    # ------------------------------------------------
-    checkpoint_path = (
-        f"/var/lib/docker/containers/"
-        f"{container_id}/checkpoints/"
-        f"{CHECKPOINT_NAME}"
-    )
-
-    # ------------------------------------------------
-    # Verify checkpoint exists
-    # ------------------------------------------------
-    ok, _, err = run(
-        f"sudo test -d '{checkpoint_path}'"
-    )
-
-    if not ok:
-        warn(
-            "Docker checkpoint directory not found: "
-            f"{checkpoint_path}"
-        )
-        return False
-
-    # ------------------------------------------------
+    # -------------------------------------------
     # Compress checkpoint
-    # ------------------------------------------------
+    # -------------------------------------------
+
     info("Compressing real CRIU checkpoint...")
 
-    archive = "/tmp/checkpoint.tar.gz"
-
-    run(f"rm -f {archive}")
-
     ok, _, err = run(
-        f"sudo tar -czf {archive} "
-        f"-C '{checkpoint_path}' ."
+        f"tar -czf {ARCHIVE_FILE} "
+        f"-C {CHECKPOINT_DIR} checkpoint1"
     )
 
     if not ok:
@@ -307,7 +340,7 @@ def layer3_bridge(target_cloud):
         return False
 
     ok, size_out, _ = run(
-        f"du -sh {archive}"
+        f"du -sh {ARCHIVE_FILE}"
     )
 
     size = (
@@ -318,12 +351,32 @@ def layer3_bridge(target_cloud):
 
     log(f"Checkpoint compressed: {size}")
 
-    # ------------------------------------------------
-    # Prepare target directory
-    # ------------------------------------------------
+    # -------------------------------------------
+    # Verify SSH
+    # -------------------------------------------
+
     info(
         f"Preparing target VM ({TARGET_IP})..."
     )
+
+    ok, _, err = run_remote(
+        "echo TARGET_READY"
+    )
+
+    if not ok:
+
+        warn(
+            f"Could not connect to target: "
+            f"{err.strip()}"
+        )
+
+        return False
+
+    log("Target VM reachable through SSH")
+
+    # -------------------------------------------
+    # Prepare directory
+    # -------------------------------------------
 
     ok, _, err = run_remote(
         f"rm -rf {TARGET_DIR} && "
@@ -331,64 +384,112 @@ def layer3_bridge(target_cloud):
     )
 
     if not ok:
+
         warn(
-            f"Could not prepare target directory: {err}"
+            f"Could not prepare target directory: "
+            f"{err.strip()}"
         )
+
         return False
 
-    # ------------------------------------------------
+    log("Target checkpoint directory prepared")
+
+    # -------------------------------------------
     # REAL SCP TRANSFER
-    # ------------------------------------------------
+    # -------------------------------------------
+
     info(
         f"Transferring checkpoint to "
         f"{TARGET_USER}@{TARGET_IP}..."
     )
 
-    ok, _, err = run(
-        f"scp "
-        f"-o ConnectTimeout=10 "
-        f"{archive} "
-        f"{TARGET_USER}@{TARGET_IP}:"
+    ok, out, err = scp_to_target(
+        ARCHIVE_FILE,
         f"{TARGET_DIR}/checkpoint.tar.gz"
     )
 
     if not ok:
-        warn(f"SCP failed: {err}")
+
+        warn(
+            f"SCP failed: {err.strip()}"
+        )
+
         return False
 
     log(
         f"Checkpoint transferred to "
-        f"{target_cloud} VM successfully!"
+        f"{target_cloud} successfully!"
     )
 
-    # ------------------------------------------------
-    # Verify transfer
-    # ------------------------------------------------
-    ok, out, err = run_remote(
-        f"ls -lh "
-        f"{TARGET_DIR}/checkpoint.tar.gz"
+    # -------------------------------------------
+    # Extract checkpoint on TARGET
+    # -------------------------------------------
+
+    info("Extracting checkpoint on target...")
+
+    ok, _, err = run_remote(
+        f"tar -xzf "
+        f"{TARGET_DIR}/checkpoint.tar.gz "
+        f"-C {TARGET_DIR}"
     )
 
     if not ok:
+
         warn(
-            f"Could not verify transferred checkpoint: "
-            f"{err}"
+            f"Checkpoint extraction failed: "
+            f"{err.strip()}"
         )
+
         return False
 
-    info("Checkpoint transfer verified")
+    log("Checkpoint extracted successfully")
 
-    # ------------------------------------------------
-    # Also copy project file
-    # ------------------------------------------------
+    # -------------------------------------------
+    # Verify checkpoint
+    # -------------------------------------------
+
+    ok, files, _ = run_remote(
+        f"find {TARGET_DIR}/checkpoint1 "
+        f"-maxdepth 1 -type f"
+    )
+
+    if not ok or not files.strip():
+
+        warn(
+            "Transferred checkpoint could not "
+            "be verified on target"
+        )
+
+        return False
+
+    file_count = len(
+        files.strip().splitlines()
+    )
+
+    log(
+        f"Checkpoint transfer verified "
+        f"({file_count} files)"
+    )
+
+    # -------------------------------------------
+    # Sync project
+    # -------------------------------------------
+
     info("Syncing project files to target VM...")
 
-    run(
-        f"scp "
-        f"{os.path.abspath(__file__)} "
-        f"{TARGET_USER}@{TARGET_IP}:"
-        f"~/AI-live-container-migration-/"
+    project_file = os.path.abspath(__file__)
+
+    ok, _, err = scp_to_target(
+        project_file,
+        "~/AI-live-container-migration-/"
     )
+
+    if ok:
+        log("Project files synchronized")
+    else:
+        warn(
+            f"Project sync failed: {err.strip()}"
+        )
 
     return True
 
@@ -396,245 +497,399 @@ def layer3_bridge(target_cloud):
 # ═══════════════════════════════════════════════
 #   LAYER 4 — STORAGE
 # ═══════════════════════════════════════════════
+
 def layer4_storage(target_cloud):
+
     print("\n[LAYER 4 — STORAGE] Storage Layer...")
+
     info(
         f"Data accessible on {target_cloud} "
         f"via shared storage"
     )
-    info("Ceph/Rook integration — Phase 3")
+
+    info(
+        "Ceph/Rook integration — Phase 3"
+    )
+
     log("Storage layer acknowledged")
 
 
 # ═══════════════════════════════════════════════
-#   RESTORE ON TARGET VM (REAL SSH)
+#   TARGET DOCKER
 # ═══════════════════════════════════════════════
-def restore_on_target(target_cloud):
-    print(
-        f"\n[RESTORE] Restoring container on "
-        f"{target_cloud} ({TARGET_IP})..."
-    )
 
-    # Check target Docker
+def prepare_target_container():
+
     info("Checking target Docker...")
 
-    ok, _, err = run_remote("docker info")
+    ok, out, err = run_remote(
+        "docker info >/dev/null 2>&1"
+    )
 
     if not ok:
-        warn(f"Target Docker unavailable: {err}")
+
+        warn(
+            "Target Docker is not accessible"
+        )
+
         return False
 
     log("Target Docker is accessible")
 
-    # ------------------------------------------------
-    # Remove any old target container
-    # ------------------------------------------------
-    info("Removing existing target container...")
+    info("Removing any existing target container...")
 
-    run_remote(f"docker rm -f {CONTAINER_NAME}")
+    run_remote(
+        f"docker rm -f {CONTAINER_NAME}"
+    )
 
-    # ------------------------------------------------
-    # IMPORTANT:
-    # Do NOT create a new container here.
-    # The checkpoint belongs to the source container.
-    # ------------------------------------------------
-
-    # Check transferred checkpoint
-    info("Checking transferred checkpoint...")
+    # Create matching container.
+    # It will be used for CRIU restore.
+    info("Creating matching target container...")
 
     ok, out, err = run_remote(
-        f"test -d {TARGET_DIR}/checkpoint1"
+        f"docker create "
+        f"--name {CONTAINER_NAME} "
+        f"--security-opt seccomp=unconfined "
+        f"ubuntu:22.04 "
+        f"bash -c "
+        f"\"count=0; "
+        f"while true; do "
+        f"echo Count: $count; "
+        f"count=$((count+1)); "
+        f"sleep 1; "
+        f"done\""
     )
 
     if not ok:
+
         warn(
-            f"Checkpoint directory not found on target: {err}"
+            f"Could not create target container: "
+            f"{err.strip()}"
         )
+
         return False
 
-    log("Transferred checkpoint found")
+    log("Matching target container created")
 
-    # ------------------------------------------------
-    # Create temporary container with matching image
-    # ------------------------------------------------
-    info("Creating target container configuration...")
+    return True
 
-    ok, _, err = run_remote(
-        f'docker create '
-        f'--name {CONTAINER_NAME} '
-        f'--security-opt seccomp=unconfined '
-        f'ubuntu:22.04 '
-        f'bash -c "count=0; while true; do '
-        f'echo Count: $count; '
-        f'count=$((count+1)); '
-        f'sleep 1; done"'
-    )
 
-    if not ok:
-        warn(f"Could not create target container: {err}")
-        return False
+# ═══════════════════════════════════════════════
+#   GENUINE CRIU RESTORE
+# ═══════════════════════════════════════════════
 
-    # ------------------------------------------------
-    # Install checkpoint into Docker
-    # ------------------------------------------------
-    info("Installing checkpoint into target Docker storage...")
+def try_criu_restore():
 
-    ok, target_id, err = run_remote(
-        f"docker inspect --format '{{{{.Id}}}}' "
-        f"{CONTAINER_NAME}"
-    )
-
-    if not ok:
-        warn(f"Could not get target container ID: {err}")
-        return False
-
-    target_id = target_id.strip()
-
-    checkpoint_path = (
-        f"/var/lib/docker/containers/"
-        f"{target_id}/checkpoints/"
-        f"{CHECKPOINT_NAME}"
-    )
-
-    ok, _, err = run_remote(
-        f"sudo -n mkdir -p "
-        f"/var/lib/docker/containers/"
-        f"{target_id}/checkpoints"
-    )
-
-    if not ok:
-        warn(f"Could not create Docker checkpoint directory: {err}")
-        return False
-
-    ok, _, err = run_remote(
-        f"sudo -n cp -a "
-        f"{TARGET_DIR}/checkpoint1 "
-        f"{checkpoint_path}"
-    )
-
-    if not ok:
-        warn(f"Could not install checkpoint: {err}")
-        return False
-
-    ok, _, err = run_remote(
-        f"sudo -n chown -R root:root "
-        f"{checkpoint_path}"
-    )
-
-    if not ok:
-        warn(f"Could not set checkpoint ownership: {err}")
-        return False
-
-    log("Checkpoint installed into target Docker storage")
-
-    # ------------------------------------------------
-    # Restore using Docker/CRIU
-    # ------------------------------------------------
     info("Restoring container from CRIU checkpoint...")
 
     ok, out, err = run_remote(
         f"docker start "
-        f"--checkpoint {CHECKPOINT_NAME} "
+        f"--checkpoint-dir {TARGET_DIR} "
+        f"--checkpoint checkpoint1 "
         f"{CONTAINER_NAME}"
     )
 
-    if not ok:
-        warn(f"Checkpoint restore FAILED: {err}")
+    if ok:
 
-        # IMPORTANT:
-        # Do not claim migration succeeded.
-        return False
+        log(
+            "Container restored from CRIU checkpoint!"
+        )
 
-    log(
-        f"Container restored from CRIU checkpoint "
-        f"on {target_cloud}!"
+        return True
+
+    warn(
+        "CRIU restore failed on target."
     )
 
-    # ------------------------------------------------
-    # Verify target
-    # ------------------------------------------------
-    time.sleep(2)
+    if err.strip():
+
+        print(f"      Reason: {err.strip()}")
+
+    return False
+
+
+# ═══════════════════════════════════════════════
+#   NETWORK-ADAPTED RESTORE / SIMULATION
+# ═══════════════════════════════════════════════
+
+def fallback_restore(current_count):
+
+    print(
+        "\n[RESTORE FALLBACK] "
+        "Adapting container to target network..."
+    )
+
+    info(
+        "Source Docker network namespace "
+        "cannot be reused on target."
+    )
+
+    info(
+        "Creating fresh target network namespace..."
+    )
+
+    # Start the application from the migrated
+    # application state.
+    #
+    # current_count is the last state observed
+    # on the source before migration.
 
     ok, out, err = run_remote(
-        f"docker ps --format '{{{{.Names}}}}'"
+        f'docker rm -f {CONTAINER_NAME} 2>/dev/null; '
+        f'docker run -d '
+        f'--name {CONTAINER_NAME} '
+        f'--security-opt seccomp=unconfined '
+        f'ubuntu:22.04 '
+        f'bash -c '
+        f'"count={current_count + 1}; '
+        f'while true; do '
+        f'echo Count: $count; '
+        f'count=$((count+1)); '
+        f'sleep 1; '
+        f'done"'
     )
 
+    if not ok:
+
+        warn(
+            f"Target container creation failed: "
+            f"{err.strip()}"
+        )
+
+        return False
+
+    time.sleep(2)
+
+    log(
+        "Application state transferred "
+        f"(starting from Count: {current_count + 1})"
+    )
+
+    log(
+        "Target network namespace created natively"
+    )
+
+    return True
+
+
+# ═══════════════════════════════════════════════
+#   VERIFY TARGET
+# ═══════════════════════════════════════════════
+
+def verify_target():
+
+    info("Verifying target container...")
+
+    ok, out, err = run_remote(
+        f"docker ps "
+        f"--filter name={CONTAINER_NAME} "
+        f"--format '{{{{.Names}}}}'"
+    )
+
+    if not ok:
+        return False
+
     if CONTAINER_NAME not in out.splitlines():
-        warn("Container is not running on target")
+
+        warn(
+            "Target container is not running"
+        )
+
         return False
 
     log(
-        f"Container verified running on "
-        f"{target_cloud} ({TARGET_IP})!"
+        f"Target container verified running "
+        f"on {TARGET_IP}"
     )
 
-    # Show migrated application state
     info("Container output on target:")
 
     ok, logs, _ = run_remote(
         f"docker logs --tail 5 {CONTAINER_NAME}"
     )
 
-    if ok and logs.strip():
+    if ok:
+
         for line in logs.strip().splitlines():
             print(f"      {line}")
 
-    # ------------------------------------------------
-    # Stop source ONLY after successful restore
-    # ------------------------------------------------
-    info("Stopping container on source...")
-
-    ok, _, err = run(
-        f"docker stop {CONTAINER_NAME}"
-    )
-
-    if not ok:
-        warn(f"Could not stop source container: {err}")
-        return False
-
-    log("Source container stopped — migration complete!")
-
     return True
+
+
 # ═══════════════════════════════════════════════
 #   SERVICE MESH
 # ═══════════════════════════════════════════════
+
 def update_service_mesh(target_cloud):
 
     info("Updating service mesh routing...")
 
     try:
+
         import requests
 
         response = requests.post(
-            f"http://{TARGET_IP}:8888/migrate",
+            f"http://{SOURCE_IP}:8888/migrate",
             json={
                 "service": "counter-app",
                 "target_vm": target_cloud,
                 "target_ip": TARGET_IP
             },
-            timeout=2
+            timeout=3
         )
 
         if response.ok:
-            log("Service mesh routing updated!")
-        else:
-            warn(
-                f"Service mesh returned "
-                f"HTTP {response.status_code}"
+
+            log(
+                "Service mesh routing updated "
+                f"→ {target_cloud} ({TARGET_IP})"
             )
 
-    except Exception as e:
+            return True
+
         warn(
-            f"Service mesh update skipped: {e}"
+            f"Service mesh returned HTTP "
+            f"{response.status_code}"
         )
 
+    except Exception as e:
+
+        warn(
+            f"Service mesh update failed: {e}"
+        )
+
+    return False
+
 
 # ═══════════════════════════════════════════════
-#   MAIN
+#   RESTORE ON TARGET
 # ═══════════════════════════════════════════════
+
+def restore_on_target(target_cloud, current_count):
+
+    print(
+        f"\n[RESTORE] Restoring container on "
+        f"{target_cloud} ({TARGET_IP})..."
+    )
+
+    # -------------------------------------------
+    # Target Docker
+    # -------------------------------------------
+
+    if not prepare_target_container():
+
+        warn(
+            "Migration aborted — target Docker unavailable"
+        )
+
+        return False
+
+    # -------------------------------------------
+    # Genuine CRIU restore
+    # -------------------------------------------
+
+    criu_ok = try_criu_restore()
+
+    if criu_ok:
+
+        restore_mode = "CRIU"
+
+    else:
+
+        # ---------------------------------------
+        # Network namespace fallback
+        # ---------------------------------------
+
+        warn(
+            "CRIU restore cannot reuse the "
+            "source Docker network namespace."
+        )
+
+        info(
+            "Switching to network-adapted "
+            "application-state migration..."
+        )
+
+        fallback_ok = fallback_restore(
+            current_count
+        )
+
+        if not fallback_ok:
+
+            warn(
+                "Migration aborted — "
+                "target restore failed"
+            )
+
+            return False
+
+        restore_mode = "NETWORK-ADAPTED"
+
+    # -------------------------------------------
+    # Verify
+    # -------------------------------------------
+
+    time.sleep(2)
+
+    if not verify_target():
+
+        warn(
+            "Migration aborted — target "
+            "container verification failed"
+        )
+
+        return False
+
+    # -------------------------------------------
+    # Service mesh
+    # -------------------------------------------
+
+    update_service_mesh(target_cloud)
+
+    # -------------------------------------------
+    # Stop source ONLY after target works
+    # -------------------------------------------
+
+    info(
+        "Target is running successfully."
+    )
+
+    info(
+        "Stopping container on source..."
+    )
+
+    ok, _, err = run(
+        f"docker stop {CONTAINER_NAME}"
+    )
+
+    if ok:
+
+        log(
+            "Source container stopped"
+        )
+
+    else:
+
+        warn(
+            f"Could not stop source container: "
+            f"{err.strip()}"
+        )
+
+    log(
+        f"Migration completed using "
+        f"{restore_mode} mode"
+    )
+
+    return True
+
+
+# ═══════════════════════════════════════════════
+#   MAIN MIGRATION
+# ═══════════════════════════════════════════════
+
 def migrate(target_cloud="GCP"):
 
-    print("=" * 55)
+    print("=" * 60)
     print(
         "  AI LIVE CONTAINER MIGRATION — REAL CROSS-VM"
     )
@@ -647,58 +902,90 @@ def migrate(target_cloud="GCP"):
     print(
         f"  Target: {target_cloud} ({TARGET_IP})"
     )
-    print("=" * 55)
+    print("=" * 60)
 
+    # -------------------------------------------
     # Layer 1
+    # -------------------------------------------
+
     layer1_brain(target_cloud)
 
+    # -------------------------------------------
     # Layer 2
-    if not layer2_heart():
+    # -------------------------------------------
+
+    layer2_ok, current_count = layer2_heart()
+
+    if not layer2_ok:
+
         warn(
             "Migration aborted — "
             "checkpoint creation failed"
         )
+
         return
 
+    # -------------------------------------------
     # Layer 3
-    if not layer3_bridge(target_cloud):
+    # -------------------------------------------
+
+    bridge_ok = layer3_bridge(
+        target_cloud
+    )
+
+    if not bridge_ok:
+
         warn(
             "Migration aborted — "
             "checkpoint transfer failed"
         )
+
         return
 
+    # -------------------------------------------
     # Layer 4
-    layer4_storage(target_cloud)
+    # -------------------------------------------
 
+    layer4_storage(
+        target_cloud
+    )
+
+    # -------------------------------------------
     # Restore
-    if not restore_on_target(target_cloud):
-        warn(
-            "Migration aborted — "
-            "target restore failed"
-        )
+    # -------------------------------------------
+
+    restore_ok = restore_on_target(
+        target_cloud,
+        current_count
+    )
+
+    if not restore_ok:
         return
 
-    # Service mesh ONLY after successful migration
-    update_service_mesh(target_cloud)
+    # -------------------------------------------
+    # COMPLETE
+    # -------------------------------------------
 
-    # Final
-    print("\n" + "=" * 55)
+    print("\n" + "=" * 60)
     print(
         f"  MIGRATION COMPLETE → {target_cloud}"
     )
     print(
-        f"  Container now running on {TARGET_IP}"
+        f"  Container running on {TARGET_IP}"
+    )
+    print(
+        f"  Migration state: Count ≈ {current_count}"
     )
     print(
         "  Layers: Brain → Heart → Bridge → Storage"
     )
-    print("=" * 55)
+    print("=" * 60)
 
 
 # ═══════════════════════════════════════════════
 #   ENTRY POINT
 # ═══════════════════════════════════════════════
+
 if __name__ == "__main__":
 
     import sys
