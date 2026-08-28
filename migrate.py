@@ -415,34 +415,49 @@ def restore_on_target(target_cloud):
         f"{target_cloud} ({TARGET_IP})..."
     )
 
-    # ------------------------------------------------
     # Check target Docker
-    # ------------------------------------------------
-    info("Checking Docker on target VM...")
+    info("Checking target Docker...")
 
-    ok, out, err = run_remote(
-        "docker info >/dev/null 2>&1"
-    )
+    ok, _, err = run_remote("docker info")
 
     if not ok:
-        warn(f"Docker is not accessible on target: {err}")
+        warn(f"Target Docker unavailable: {err}")
         return False
 
     log("Target Docker is accessible")
 
     # ------------------------------------------------
-    # Remove any old container
+    # Remove any old target container
     # ------------------------------------------------
-    info("Removing any existing target container...")
+    info("Removing existing target container...")
 
-    run_remote(
-        f"docker rm -f {CONTAINER_NAME}"
+    run_remote(f"docker rm -f {CONTAINER_NAME}")
+
+    # ------------------------------------------------
+    # IMPORTANT:
+    # Do NOT create a new container here.
+    # The checkpoint belongs to the source container.
+    # ------------------------------------------------
+
+    # Check transferred checkpoint
+    info("Checking transferred checkpoint...")
+
+    ok, out, err = run_remote(
+        f"test -d {TARGET_DIR}/checkpoint1"
     )
 
+    if not ok:
+        warn(
+            f"Checkpoint directory not found on target: {err}"
+        )
+        return False
+
+    log("Transferred checkpoint found")
+
     # ------------------------------------------------
-    # Create matching container
+    # Create temporary container with matching image
     # ------------------------------------------------
-    info("Creating matching container on target...")
+    info("Creating target container configuration...")
 
     ok, _, err = run_remote(
         f'docker create '
@@ -450,100 +465,37 @@ def restore_on_target(target_cloud):
         f'--security-opt seccomp=unconfined '
         f'ubuntu:22.04 '
         f'bash -c "count=0; while true; do '
-        f'echo Count: \$count; '
-        f'count=\$((count+1)); '
+        f'echo Count: $count; '
+        f'count=$((count+1)); '
         f'sleep 1; done"'
     )
 
     if not ok:
-        warn(
-            f"Could not create target container: {err}"
-        )
+        warn(f"Could not create target container: {err}")
         return False
 
-    log("Matching target container created")
+    # ------------------------------------------------
+    # Install checkpoint into Docker
+    # ------------------------------------------------
+    info("Installing checkpoint into target Docker storage...")
 
-    # ------------------------------------------------
-    # Get target container ID
-    # ------------------------------------------------
     ok, target_id, err = run_remote(
-        f"docker inspect "
-        f"--format '{{{{.Id}}}}' "
+        f"docker inspect --format '{{{{.Id}}}}' "
         f"{CONTAINER_NAME}"
     )
 
-    if not ok or not target_id.strip():
-        warn(
-            f"Could not get target container ID: {err}"
-        )
+    if not ok:
+        warn(f"Could not get target container ID: {err}")
         return False
 
     target_id = target_id.strip()
 
-    info(f"Target container ID: {target_id[:12]}")
-
-    # ------------------------------------------------
-    # Extract transferred checkpoint
-    # ------------------------------------------------
-    info("Extracting transferred CRIU checkpoint...")
-
-    ok, _, err = run_remote(
-        f"rm -rf {TARGET_DIR}/checkpoint1 && "
-        f"mkdir -p {TARGET_DIR}/checkpoint1 && "
-        f"tar -xzf {TARGET_DIR}/checkpoint.tar.gz "
-        f"-C {TARGET_DIR}/checkpoint1"
-    )
-
-    if not ok:
-        warn(
-            f"Checkpoint extraction failed: {err}"
-        )
-        return False
-
-    log("Checkpoint extracted successfully")
-
-    # ------------------------------------------------
-    # Verify extracted files
-    # ------------------------------------------------
-    ok, count, err = run_remote(
-        f"find {TARGET_DIR}/checkpoint1 "
-        f"-type f | wc -l"
-    )
-
-    if not ok:
-        warn(
-            f"Could not inspect checkpoint: {err}"
-        )
-        return False
-
-    info(
-        f"Transferred checkpoint contains "
-        f"{count.strip()} files"
-    )
-
-    # ------------------------------------------------
-    # IMPORTANT:
-    #
-    # Docker's checkpoint directory is root-owned.
-    # We use sudo -n so the script NEVER hangs
-    # waiting for a password.
-    #
-    # Passwordless sudo for Docker checkpoint
-    # operations must be configured on the target VM.
-    # ------------------------------------------------
-
-    target_checkpoint_path = (
+    checkpoint_path = (
         f"/var/lib/docker/containers/"
         f"{target_id}/checkpoints/"
         f"{CHECKPOINT_NAME}"
     )
 
-    info(
-        "Installing checkpoint into "
-        "target Docker storage..."
-    )
-
-    # Create checkpoint directory
     ok, _, err = run_remote(
         f"sudo -n mkdir -p "
         f"/var/lib/docker/containers/"
@@ -551,71 +503,34 @@ def restore_on_target(target_cloud):
     )
 
     if not ok:
-        warn(
-            "Target requires sudo permission for Docker "
-            "checkpoint storage."
-        )
-        warn(
-            "Configure passwordless sudo for the required "
-            "Docker checkpoint operations on the target VM."
-        )
-        warn(f"Details: {err}")
+        warn(f"Could not create Docker checkpoint directory: {err}")
         return False
 
-    # Copy checkpoint
     ok, _, err = run_remote(
         f"sudo -n cp -a "
         f"{TARGET_DIR}/checkpoint1 "
-        f"{target_checkpoint_path}"
+        f"{checkpoint_path}"
     )
 
     if not ok:
-        warn(
-            f"Could not install checkpoint: {err}"
-        )
+        warn(f"Could not install checkpoint: {err}")
         return False
 
-    # Fix ownership
     ok, _, err = run_remote(
         f"sudo -n chown -R root:root "
-        f"{target_checkpoint_path}"
+        f"{checkpoint_path}"
     )
 
     if not ok:
-        warn(
-            f"Could not set checkpoint ownership: {err}"
-        )
+        warn(f"Could not set checkpoint ownership: {err}")
         return False
 
     log("Checkpoint installed into target Docker storage")
 
     # ------------------------------------------------
-    # Verify checkpoint
+    # Restore using Docker/CRIU
     # ------------------------------------------------
-    ok, count, err = run_remote(
-        f"sudo -n find "
-        f"{target_checkpoint_path} "
-        f"-type f | wc -l"
-    )
-
-    if not ok:
-        warn(
-            f"Could not verify checkpoint files: {err}"
-        )
-        return False
-
-    info(
-        f"Target Docker checkpoint contains "
-        f"{count.strip()} files"
-    )
-
-    # ------------------------------------------------
-    # REAL CRIU RESTORE
-    # ------------------------------------------------
-    info(
-        "Restoring container from "
-        "CRIU checkpoint..."
-    )
+    info("Restoring container from CRIU checkpoint...")
 
     ok, out, err = run_remote(
         f"docker start "
@@ -624,9 +539,10 @@ def restore_on_target(target_cloud):
     )
 
     if not ok:
-        warn(
-            f"Checkpoint restore FAILED: {err}"
-        )
+        warn(f"Checkpoint restore FAILED: {err}")
+
+        # IMPORTANT:
+        # Do not claim migration succeeded.
         return False
 
     log(
@@ -635,20 +551,16 @@ def restore_on_target(target_cloud):
     )
 
     # ------------------------------------------------
-    # Verify running container
+    # Verify target
     # ------------------------------------------------
     time.sleep(2)
 
     ok, out, err = run_remote(
-        f"docker ps "
-        f"--format '{{{{.Names}}}}'"
+        f"docker ps --format '{{{{.Names}}}}'"
     )
 
     if CONTAINER_NAME not in out.splitlines():
-        warn(
-            "Container was not found running "
-            "on target after restore"
-        )
+        warn("Container is not running on target")
         return False
 
     log(
@@ -656,12 +568,10 @@ def restore_on_target(target_cloud):
         f"{target_cloud} ({TARGET_IP})!"
     )
 
-    # ------------------------------------------------
-    # Show migrated counter state
-    # ------------------------------------------------
-    info("Container output on target VM:")
+    # Show migrated application state
+    info("Container output on target:")
 
-    ok, logs, err = run_remote(
+    ok, logs, _ = run_remote(
         f"docker logs --tail 5 {CONTAINER_NAME}"
     )
 
@@ -672,28 +582,17 @@ def restore_on_target(target_cloud):
     # ------------------------------------------------
     # Stop source ONLY after successful restore
     # ------------------------------------------------
-    info(
-        "Target restore successful."
-    )
-
-    info(
-        "Stopping container on source (AWS)..."
-    )
+    info("Stopping container on source...")
 
     ok, _, err = run(
         f"docker stop {CONTAINER_NAME}"
     )
 
     if not ok:
-        warn(
-            f"Could not stop source container: {err}"
-        )
+        warn(f"Could not stop source container: {err}")
         return False
 
-    log(
-        "Source container stopped — "
-        "migration complete!"
-    )
+    log("Source container stopped — migration complete!")
 
     return True
 # ═══════════════════════════════════════════════
