@@ -164,13 +164,20 @@ def layer4_storage(target_cloud):
 def restore_on_target(target_cloud):
     print(f"\n[RESTORE] Restoring container on {target_cloud} ({TARGET_IP})...")
 
-    # Remove old container on target
+   # Prepare matching stopped container on target
     run_remote(f"docker rm -f {CONTAINER_NAME}")
 
-    # Try checkpoint restore on target
+    run_remote(
+         f'docker create --name {CONTAINER_NAME} '
+         f'--security-opt seccomp=unconfined ubuntu:22.04 '
+         f'bash -c "count=0; while true; do echo Count: $count; '
+         f'count=$((count+1)); sleep 1; done"'
+    )
+
+# Try checkpoint restore on target
     ok, out, err = run_remote(
-        f"docker start --checkpoint-dir {TARGET_DIR} "
-        f"--checkpoint checkpoint1 {CONTAINER_NAME}"
+         f"docker start --checkpoint-dir {TARGET_DIR} "
+         f"--checkpoint checkpoint1 {CONTAINER_NAME}"
     )
 
     if ok:
