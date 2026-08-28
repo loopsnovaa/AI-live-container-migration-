@@ -416,8 +416,25 @@ def restore_on_target(target_cloud):
     )
 
     # ------------------------------------------------
-    # Remove old container on target
+    # Check target Docker
     # ------------------------------------------------
+    info("Checking Docker on target VM...")
+
+    ok, out, err = run_remote(
+        "docker info >/dev/null 2>&1"
+    )
+
+    if not ok:
+        warn(f"Docker is not accessible on target: {err}")
+        return False
+
+    log("Target Docker is accessible")
+
+    # ------------------------------------------------
+    # Remove any old container
+    # ------------------------------------------------
+    info("Removing any existing target container...")
+
     run_remote(
         f"docker rm -f {CONTAINER_NAME}"
     )
@@ -444,6 +461,8 @@ def restore_on_target(target_cloud):
         )
         return False
 
+    log("Matching target container created")
+
     # ------------------------------------------------
     # Get target container ID
     # ------------------------------------------------
@@ -461,16 +480,17 @@ def restore_on_target(target_cloud):
 
     target_id = target_id.strip()
 
+    info(f"Target container ID: {target_id[:12]}")
+
     # ------------------------------------------------
     # Extract transferred checkpoint
     # ------------------------------------------------
-    info("Extracting transferred checkpoint...")
+    info("Extracting transferred CRIU checkpoint...")
 
     ok, _, err = run_remote(
         f"rm -rf {TARGET_DIR}/checkpoint1 && "
         f"mkdir -p {TARGET_DIR}/checkpoint1 && "
-        f"tar -xzf "
-        f"{TARGET_DIR}/checkpoint.tar.gz "
+        f"tar -xzf {TARGET_DIR}/checkpoint.tar.gz "
         f"-C {TARGET_DIR}/checkpoint1"
     )
 
@@ -480,9 +500,38 @@ def restore_on_target(target_cloud):
         )
         return False
 
+    log("Checkpoint extracted successfully")
+
     # ------------------------------------------------
-    # Target Docker checkpoint storage
+    # Verify extracted files
     # ------------------------------------------------
+    ok, count, err = run_remote(
+        f"find {TARGET_DIR}/checkpoint1 "
+        f"-type f | wc -l"
+    )
+
+    if not ok:
+        warn(
+            f"Could not inspect checkpoint: {err}"
+        )
+        return False
+
+    info(
+        f"Transferred checkpoint contains "
+        f"{count.strip()} files"
+    )
+
+    # ------------------------------------------------
+    # IMPORTANT:
+    #
+    # Docker's checkpoint directory is root-owned.
+    # We use sudo -n so the script NEVER hangs
+    # waiting for a password.
+    #
+    # Passwordless sudo for Docker checkpoint
+    # operations must be configured on the target VM.
+    # ------------------------------------------------
+
     target_checkpoint_path = (
         f"/var/lib/docker/containers/"
         f"{target_id}/checkpoints/"
@@ -494,23 +543,28 @@ def restore_on_target(target_cloud):
         "target Docker storage..."
     )
 
-    # Create target checkpoint directory
+    # Create checkpoint directory
     ok, _, err = run_remote(
-        f"sudo mkdir -p "
+        f"sudo -n mkdir -p "
         f"/var/lib/docker/containers/"
         f"{target_id}/checkpoints"
     )
 
     if not ok:
         warn(
-            f"Could not create Docker checkpoint "
-            f"directory: {err}"
+            "Target requires sudo permission for Docker "
+            "checkpoint storage."
         )
+        warn(
+            "Configure passwordless sudo for the required "
+            "Docker checkpoint operations on the target VM."
+        )
+        warn(f"Details: {err}")
         return False
 
-    # Copy checkpoint into Docker storage
+    # Copy checkpoint
     ok, _, err = run_remote(
-        f"sudo cp -a "
+        f"sudo -n cp -a "
         f"{TARGET_DIR}/checkpoint1 "
         f"{target_checkpoint_path}"
     )
@@ -521,22 +575,25 @@ def restore_on_target(target_cloud):
         )
         return False
 
-    # Set permissions
-    run_remote(
-        f"sudo chown -R root:root "
+    # Fix ownership
+    ok, _, err = run_remote(
+        f"sudo -n chown -R root:root "
         f"{target_checkpoint_path}"
     )
 
-    log(
-        "Checkpoint copied into target "
-        "Docker storage"
-    )
+    if not ok:
+        warn(
+            f"Could not set checkpoint ownership: {err}"
+        )
+        return False
+
+    log("Checkpoint installed into target Docker storage")
 
     # ------------------------------------------------
-    # Verify checkpoint files
+    # Verify checkpoint
     # ------------------------------------------------
     ok, count, err = run_remote(
-        f"sudo find "
+        f"sudo -n find "
         f"{target_checkpoint_path} "
         f"-type f | wc -l"
     )
@@ -548,53 +605,17 @@ def restore_on_target(target_cloud):
         return False
 
     info(
-        f"Target checkpoint contains "
+        f"Target Docker checkpoint contains "
         f"{count.strip()} files"
     )
 
     # ------------------------------------------------
-    # Verify Docker sees checkpoint
-    # ------------------------------------------------
-    ok, checkpoints, err = run_remote(
-        f"docker checkpoint ls {CONTAINER_NAME}"
-    )
-
-    if not ok:
-        warn(
-            f"Could not list target checkpoints: {err}"
-        )
-        return False
-
-    info("Target Docker checkpoint list:")
-    print(checkpoints)
-
-    if CHECKPOINT_NAME not in checkpoints:
-        warn(
-            "Target Docker does not recognize "
-            f"'{CHECKPOINT_NAME}'"
-        )
-        return False
-
-    log(
-        "Target Docker recognizes checkpoint"
-    )
-
-    # ------------------------------------------------
-    # REAL RESTORE
+    # REAL CRIU RESTORE
     # ------------------------------------------------
     info(
         "Restoring container from "
         "CRIU checkpoint..."
     )
-
-    # IMPORTANT:
-    # No --checkpoint-dir here.
-    #
-    # Your Docker daemon rejected:
-    #
-    # docker start --checkpoint-dir ...
-    #
-    # so we use Docker's normal checkpoint location.
 
     ok, out, err = run_remote(
         f"docker start "
@@ -614,43 +635,39 @@ def restore_on_target(target_cloud):
     )
 
     # ------------------------------------------------
-    # Verify target container
+    # Verify running container
     # ------------------------------------------------
     time.sleep(2)
 
-    ok, out, _ = run_remote(
+    ok, out, err = run_remote(
         f"docker ps "
         f"--format '{{{{.Names}}}}'"
     )
 
-    if CONTAINER_NAME in out.splitlines():
-
-        log(
-            f"Container verified running on "
-            f"{target_cloud} ({TARGET_IP})!"
-        )
-
-        info(
-            "Container output on target VM:"
-        )
-
-        ok2, logs, _ = run_remote(
-            f"docker logs --tail 5 "
-            f"{CONTAINER_NAME}"
-        )
-
-        if ok2:
-            for line in logs.strip().split("\n"):
-                if line:
-                    print(f"      {line}")
-
-    else:
-
+    if CONTAINER_NAME not in out.splitlines():
         warn(
-            "Could not verify container on target"
+            "Container was not found running "
+            "on target after restore"
         )
-
         return False
+
+    log(
+        f"Container verified running on "
+        f"{target_cloud} ({TARGET_IP})!"
+    )
+
+    # ------------------------------------------------
+    # Show migrated counter state
+    # ------------------------------------------------
+    info("Container output on target VM:")
+
+    ok, logs, err = run_remote(
+        f"docker logs --tail 5 {CONTAINER_NAME}"
+    )
+
+    if ok and logs.strip():
+        for line in logs.strip().splitlines():
+            print(f"      {line}")
 
     # ------------------------------------------------
     # Stop source ONLY after successful restore
@@ -679,8 +696,6 @@ def restore_on_target(target_cloud):
     )
 
     return True
-
-
 # ═══════════════════════════════════════════════
 #   SERVICE MESH
 # ═══════════════════════════════════════════════
