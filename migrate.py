@@ -101,8 +101,8 @@ def ensure_source_container():
        f"""--security-opt seccomp=unconfined """
        f"""ubuntu:22.04 """
        f"""bash -c 'count=0; while true; do """
-       f"""echo "Count: $count"; """
-       f"""count=$((count+1)); """
+       f"""echo "Count: \$count"; """
+       f"""count=\$((count+1)); """
        f"""sleep 1; """
        f"""done'"""
     )
