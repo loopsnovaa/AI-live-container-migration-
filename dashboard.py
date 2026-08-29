@@ -9,7 +9,7 @@ from datetime import datetime
 st.set_page_config(page_title="AI Migration Dashboard", page_icon="🚀", layout="wide")
 
 VM1_IP       = "192.168.88.10"
-VM2_IP       = "192.168.88.14"
+VM2_IP       = "192.168.88.10"
 ROUTING_FILE = "/shared-storage/routing_rules.json"
 LOG_FILE     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migration_log.txt")
 
@@ -64,7 +64,7 @@ last_mig   = info.get("last_migration", "Never")
 #   DASHBOARD UI
 # ════════════════════════════════════════════════════════
 
-st.markdown("<h1 style='text-align:center'>🚀 AI Live Container Migration Dashboard</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align:center'> AI Live Container Migration Dashboard</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align:center;color:gray'>Real-time monitoring — AWS | GCP | Azure</p>", unsafe_allow_html=True)
 st.divider()
 
@@ -118,15 +118,15 @@ v1, v2 = st.columns(2)
 
 with v1:
     if current_vm == "AWS":
-        st.success(f"🟠 VM1 — AWS (Your Laptop)\nIP: {VM1_IP}\n🟢 CONTAINER RUNNING HERE")
+        st.success(f"🟠 VM1 \nIP: {VM1_IP}\n🟢 CONTAINER RUNNING HERE")
     else:
-        st.warning(f"🟠 VM1 — AWS (Your Laptop)\nIP: {VM1_IP}\n⚪ Container migrated away")
+        st.warning(f"🟠 VM1 \nIP: {VM1_IP}\n⚪ Container migrated away")
 
 with v2:
     if current_vm == "GCP":
-        st.success(f"🔵 VM2 — GCP (Friend's Laptop)\nIP: {VM2_IP}\n🟢 CONTAINER RUNNING HERE")
+        st.success(f"🔵 VM2 \nIP: {VM2_IP}\n🟢 CONTAINER RUNNING HERE")
     else:
-        st.info(f"🔵 VM2 — GCP (Friend's Laptop)\nIP: {VM2_IP}\n⚪ Waiting for migration")
+        st.info(f"🔵 VM2 \nIP: {VM2_IP}\n⚪ Waiting for migration")
 
 st.divider()
 
