@@ -309,8 +309,8 @@ def layer3_bridge():
 
     print("\n[LAYER 3 — BRIDGE] Local Container Transfer...")
 
-    info("No SSH required")
-    info("No SCP required")
+    #info("No SSH required")
+    i#nfo("No SCP required")
     info("Using local Docker host as migration bridge")
 
     # Check that the application-state checkpoint exists
@@ -341,7 +341,7 @@ def layer4_storage():
     print("\n[LAYER 4 — STORAGE] Storage Layer...")
 
     info("Checkpoint stored on local Docker host")
-    info("Ceph/Rook integration — Phase 3")
+    #info("Ceph/Rook integration — Phase 3")
 
     log("Storage layer acknowledged")
 
